@@ -1,18 +1,17 @@
 .data
-	board: .word 0 # 4 bytes storing the positions marked either as X or O
-	
-	inputSpaceMessage: .asciiz "Digite a posição desejada [1-9]: \n"
+	board: .word 0x00000312 # 4 bytes storing the positions marked either as X or O
+
+	emptyRow:   .asciiz "      |     |     \n"
+	contentRowBegin: .asciiz "   "
+	contentRowSeparator: .asciiz "  |  "
+	contentRowEnd: .asciiz "  \n"
+	divRow:     .asciiz " _____|_____|_____\n"
+	inputSpaceMessage: .asciiz "Digite a posição desejada [1-9]: "
 	invalidSpaceMessage: .asciiz "A casa selecionada é inválida, pois deve estar no intervalo [1,9].\n"
 	takenSpaceMessage: .asciiz "A casa selecionada já foi preenchida. Selecione uma casa vazia.\n"
 .text
-	#li $a0, 0
-	#jal player_input
+	jal print_board
 	
-	#li $a0, 0
-	#jal player_input
-	
-	li $a0, 10
-	jal validate_input
 	li $v0, 0
 	
 	#jal main # Call the main procedure (start the program)
@@ -129,9 +128,8 @@
 		subi $sp, $sp, 8
 		sw $ra, ($sp)
 	# Body
-		do_while_1: # Gets an input until it's valid
+		do_while_1: # Gets an input until it's valid		
 			# print inputSpaceMessage
-			li $v0, 4
 			la $a0, inputSpaceMessage
 			syscall
 		
@@ -243,9 +241,168 @@
 		
 		jr $ra
 	
-	# Prints the current state of the board
-	print_board:
+	# Prints the current char at the desired board position
+	# Args: $a0 (x), $a1 (y) (both between 0-2)
+	# Return: NONE
+	# Stack:
+	# 12 - 16 | boardX
+	# 8 - 12 | $a1
+	# 4 - 8 | $a0
+	# 0 - 4 | $ra
+	print_house:
+	# Prologue
+		subi $sp, $sp, 16
+		sw $ra, ($sp)
+		sw $a0, 4($sp)
+		sw $a1, 8($sp)
+	# Body
+		jal boardX
+		sw $v0, 12($sp)
 	
+		jal boardO
+		# $t0 = boardX
+		lw $t0, 12($sp)
+		# $t1 = boardO
+		move $t1, $v0
+		
+		# $t2 = x
+		lw $t2, 4($sp)
+		# $t3 = y
+		lw $t3, 8($sp)
+		
+		# $t3 *= 3 (row size)
+		mulu $t3, $t3, 3
+		# $t2 = 3*y + x
+		addu $t2, $t2, $t3
+		
+		get_house_switch:
+			srlv $t4, $t0, $t2
+			and $t4, $t4, 0x00000001
+			beq $t4, 1, get_house_case_X # There is a X at the selected position
+			
+			srlv $t4, $t1, $t2
+			and $t4, $t4, 0x00000001
+			beq $t4, 1, get_house_case_O # There is a O at the selected position
+			
+			j get_house_case_empty # It's empty
+			get_house_case_X:
+				li $t5, 'X'
+			
+				j get_house_end_switch
+			get_house_case_O:
+				li $t5, 'O'
+				
+				j get_house_end_switch
+			get_house_case_empty:
+				li $t5, ' '
+		get_house_end_switch:
+		
+		move $a0, $t5
+		li $v0, 11
+		syscall
+	# Epilogue
+		lw $ra, ($sp)
+		addi $sp, $sp, 16
+	
+		jr $ra
+	
+	# Prints a row of the board
+	# Args: $a0 - rowNumber
+	# Return value: NONE
+	# Stack:
+	# 4 - 8 | $a0
+	# 0 - 4 | $ra
+	print_content_row:
+	# Prologue
+		subi $sp, $sp, 8
+		sw $ra, ($sp)
+		sw $a0, 4($sp)
+	# Body		
+		# print string syscall
+		li $v0, 4
+		la $a0, contentRowBegin
+		syscall
+		
+		# print char syscall
+		# print first entry
+		li $a0, 0
+		lw $a1, 4($sp)
+		jal print_house
+		
+		li $v0, 4
+		la $a0, contentRowSeparator
+		syscall
+		
+		# print second entry
+		li $a0, 1
+		lw $a1, 4($sp)
+		jal print_house
+		
+		li $v0, 4
+		la $a0, contentRowSeparator
+		syscall
+		
+		# print third entry
+		li $a0, 2
+		lw $a1, 4($sp)
+		jal print_house
+		
+		li $v0, 4
+		la $a0, contentRowEnd
+		syscall
+		
+	# Epilogue
+		lw $ra, ($sp)
+		addi $sp, $sp, 8
+	
+		jr $ra
+	
+	# Prints the current state of the board
+	# Stack:
+	# 0 - 4 | $ra
+	print_board:
+	# Prologue
+		subi $sp, $sp, 4
+		sw $ra, ($sp)
+	# Body
+		# print syscall
+		li $v0, 4
+		la $a0, emptyRow
+		syscall
+		
+		# print the first contentRow
+		li $a0, 0
+		jal print_content_row
+		
+		li $v0, 4
+		la $a0, divRow
+		syscall
+		
+		la $a0, emptyRow
+		syscall
+		
+		# print the second contentRow
+		li $a0, 1
+		jal print_content_row
+		
+		li $v0, 4
+		la $a0, divRow
+		syscall
+		
+		la $a0, emptyRow
+		syscall
+		
+		# print the third contentRow
+		li $a0, 2
+		jal print_content_row
+		
+		li $v0, 4
+		la $a0, emptyRow
+		syscall
+	# Epilogue
+		lw $ra, ($sp)
+		addi $sp, $sp, 4
+		
 		jr $ra
 	
 	# Prints a message according to the game state
