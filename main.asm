@@ -1,6 +1,7 @@
 .data
 	board: .word 0 # 4 bytes storing the positions marked either as X or O
 	
+	inputSpaceMessage: .asciiz "Digite a posição desejada [1-9]: \n"
 	invalidSpaceMessage: .asciiz "A casa selecionada é inválida, pois deve estar no intervalo [1,9].\n"
 	takenSpaceMessage: .asciiz "A casa selecionada já foi preenchida. Selecione uma casa vazia.\n"
 .text
@@ -118,25 +119,28 @@
 	
 	# User interaction to get the player's move
 	# Accepted positions are 1-9
-	# Args: $a0 - isBotX (if bot plays as X)
-	# Return value: NONE
+	# Args: NONE
+	# Return value: $v0 - player input
 	# Stack:
-	# 8 - 12 | input
-	# 4 - 8 | $a0
+	# 4 - 8 | input
 	# 0 - 4 | $ra
-	player_input:
+	get_user_move:
 	# Prologue
-		subi $sp, $sp, 12
+		subi $sp, $sp, 8
 		sw $ra, ($sp)
-		sw $a0, 4($sp)
 	# Body
 		do_while_1: # Gets an input until it's valid
+			# print inputSpaceMessage
+			li $v0, 4
+			la $a0, inputSpaceMessage
+			syscall
+		
 			# Read integer syscall
 			li $v0, 5
 			syscall
 			
 			# Save input in the stack
-			sw $v0, 8($sp)
+			sw $v0, 4($sp)
 			
 			# validateInput(input)
 			move $a0, $v0
@@ -145,45 +149,21 @@
 			# if $v0 == 0, continue
 			beqz $v0, do_while_1
 		end_do_while_1:
-		
-		# $t0 = isBotX
-		lw $t0, 4($sp)
-		
-		# $t1 = input
-		lw $t1, 8($sp)
-		
-		# $t2 = 0x0001
-		li $t2, 1
-		
-		# shifts the bit 1 to the desired position ($t1-1 times)
-		# and stores the resulting byte in $t3
-		subi $t1, $t1, 1
-		sllv $t3, $t2, $t1
-				
-		beqz $t0, else_3
-		if_3: # Human plays as O
-			# boardO |= $t3 (bitwise OR)
-			lw $t4, boardO
-			or $t4, $t4, $t3
-			sw $t4, boardO
-			
-			j end_if_3
-		else_3: # Human plays as X
-			# boardZ |= $t3 (bitwise OR)
-			lw $t4, boardX
-			or $t4, $t4, $t3
-			sw $t4, boardX
-		end_if_3:
+		# last input was valid
+		# return input
+		lw $v0, 4($sp)
 		
 	# Epilogue
 		lw $ra, ($sp)
-		addi $sp, $sp, 12
+		addi $sp, $sp, 8
 		jr $ra
 	
 	# AI Logic to choose it's move
 	# Args: NONE
-	# Return value: NONE
-	bot_play:
+	# Return value: $v0 - bot's move
+	get_bot_move:
+		# TODO
+		li $v0, 3
 	
 		jr $ra
 	
@@ -193,9 +173,62 @@
 	# $a1 - isBotX (if bot plays as X)
 	# Return value: NONE
 	# Stack:
-	#
+	# 8 - 12 | $a1 - isBotX
+	# 4 - 8 | $a0 - isXTurn
+	# 0 - 4 | $ra
 	play:
+	# Prologue
+		subi $sp, $sp, 12
+		sw $ra, ($sp)
+		sw $a0, 4($sp)
+		sw $a1, 8($sp)
+	# Body
+		xor $t0, $a0, $a1 # $t0 = isUserTurn
+		
+		beqz $t0 play_else_1
+		play_if_1: # isBotTurn
+			jal get_bot_move
+			# $t0 = bot_move
+			move $t0, $v0
+		play_else_1: # isUserTurn
+			jal get_user_move
+			# $t0 = user_move
+			move $t0, $v0
+		end_play_if_1:
+		# $t1 = isBotX
+		lw $t1, 8($sp)
+		
+		# $t2 = 0x00000001
+		li $t2, 1
+		
+		lw $t4, board
+		
+		beqz $t1, play_else_2
+		play_if_2: # Player is O
+			# $t0 += 9-1 = 8 (boardO is stored in the 19th-10th bits)
+			# and humans count beginning from 1
+			addi $t0, $t0, 8
+				
+			j play_end_if_2
+		play_else_2: # Player is X
+			# $t0-- (humans count beginning from 1)
+			subi $t0, $t0, 1
+		play_end_if_2:
+		
+		# shifts the bit 1 to the desired position:
+		# move -1 times if X
+		# move -1 + 9 times if O
+		# and stores the resulting byte in $t3
+		sllv $t3, $t2, $t0
+		
+		# saves the board intersection with the new move
+		or $t4, $t4, $t3
+		sw $t4, board
 	
+	# Epilogue
+		lw $ra, ($sp)
+		addi $sp, $sp, 12
+		
 		jr $ra
 	
 	# Logic to verify if the game has finished (either someone won or it's a draw)
@@ -210,10 +243,9 @@
 		
 		jr $ra
 	
+	# Prints the current state of the board
 	print_board:
-		for_1:
 	
-		end_for_1:
 		jr $ra
 	
 	# Prints a message according to the game state
@@ -242,8 +274,8 @@
 		sw $ra, ($sp)
 	
 	# Body
-		# TODO: generates a pseudo-random boolean to decide who starts the game
-		# defaults to player first
+		# TODO: generates a pseudo-random boolean to decide who plays as X
+		# defaults to user as X and bot as O
 		sw $zero, 8($sp)
 		
 		# isXTurn = TRUE (X starts the game)
