@@ -1,14 +1,19 @@
 .data
 	board: .word 0 # 4 bytes storing the positions marked either as X or O
 	
-	invalidSpaceMessage: .asciiz "A casa selecionada é inválida, pois deve estar no intervalo [1,9]."
-	takenSpaceMessage: .asciiz "A casa selecionada já foi preenchida. Selecione uma casa vazia."
+	invalidSpaceMessage: .asciiz "A casa selecionada é inválida, pois deve estar no intervalo [1,9].\n"
+	takenSpaceMessage: .asciiz "A casa selecionada já foi preenchida. Selecione uma casa vazia.\n"
 .text
-	li $a0, 0
-	jal player_input
+	#li $a0, 0
+	#jal player_input
 	
-	li $a0, 0
-	jal player_input
+	#li $a0, 0
+	#jal player_input
+	
+	li $a0, 10
+	jal validate_input
+	li $v0, 0
+	
 	#jal main # Call the main procedure (start the program)
 	
 	# Set $a0 to the return value of main
@@ -43,7 +48,6 @@
 	# and prints the corresponding message, if applicable
 	# Args: 
 	# $a0 - position
-	# $a1 - isBotX
 	# Return value: $v0 - boolean
 	# Stack: 
 	# 0 - 4 | $ra
@@ -52,15 +56,18 @@
 		subi $sp, $sp, 4
 		sw $ra, ($sp)
 	# Body
-		# $t0 = input < 1
-		slti $t0, $a0, 1
-		# $t1 = input > 10
-		slti $t1, $a0, 10
-		not $t1, $t1
-		# $t2 = input < 1 || input > 10
-		or $t2, $t1, $t0
+		# $t1 = input < 1
+		li $t0, 1
+		slt $t1, $a0, $t0
+		# $t2 = input > 9
+		li $t0, 9
+		sgt $t2, $a0, $t0
 		
-		bnez $t2, else_1
+		# $t0 = inputIsInvalid
+		# that is, input < 1 || input > 9 (out of allowed range)
+		or $t0, $t1, $t2
+		
+		beqz $t0, else_1
 		if_1: # Input is invalid
 			# print invalidSpaceMessage
 			li $v0, 4
@@ -91,24 +98,21 @@
 		
 			# Is there a common bit between the board and the selected space?
 			and $t4, $a0, $t0
-		
-			# $t0 = $t4 != 0
-			sne $t0, $t4, $zero
 			
-			bnez $t0, end_if_2
-			if_2:
+			beqz $t4, end_if_2
+			if_2: # yes, so the space is taken ($t4 = 1)
 				# print takenSpaceMessage
 				li $v0, 4
 				la $a0, takenSpaceMessage
 				syscall
-			end_if_2:
+			end_if_2: # no
 			
-			# return isValid
-			move $v0, $t0
+			# return !$t4
+			not $v0, $t4
 		end_if_1:
 	# Epilogue
-		addi $sp, $sp, 4
 		lw $ra, ($sp)
+		addi $sp, $sp, 4
 		
 		jr $ra
 	
@@ -134,9 +138,8 @@
 			# Save input in the stack
 			sw $v0, 8($sp)
 			
-			# validateInput(input, isBotX)
+			# validateInput(input)
 			move $a0, $v0
-			lw $a1, 4($sp)
 			jal validate_input
 			
 			# if $v0 == 0, continue
