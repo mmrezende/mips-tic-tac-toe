@@ -1,7 +1,7 @@
 .data
-	board: .word 0x312 # 4 bytes storing the positions marked either as X or O
+	board: .word 0 # 4 bytes storing the positions marked either as X or O
 	
-	drawMask: .word 0x2FFFF
+	drawMask: .word 0x1FF
 	winMasks: .word 0x7, 0x38, 0x1C0, 0x49, 0x92, 0x124, 0x111, 0x54
 
 	emptyRow:   .asciiz "      |     |     \n"
@@ -9,9 +9,9 @@
 	contentRowSeparator: .asciiz "  |  "
 	contentRowEnd: .asciiz "  \n"
 	divRow:     .asciiz " _____|_____|_____\n"
-	inputSpaceMessage: .asciiz "Digite a posição desejada [1-9]: "
-	invalidSpaceMessage: .asciiz "A casa selecionada é inválida, pois deve estar no intervalo [1,9].\n"
-	takenSpaceMessage: .asciiz "A casa selecionada já foi preenchida. Selecione uma casa vazia.\n"
+	inputSpaceMessage: .asciiz "\nDigite a posição desejada [1-9]: "
+	invalidSpaceMessage: .asciiz "\nA casa selecionada é inválida, pois deve estar no intervalo [1,9].\n"
+	takenSpaceMessage: .asciiz "\nA casa selecionada já foi preenchida. Selecione uma casa vazia.\n"
 	xWonMessage: .asciiz "\nX venceu!\n"
 	oWonMessage: .asciiz "\nO venceu!\n"
 	drawMessage: .asciiz "\nDeu velha! :/\n"
@@ -160,11 +160,40 @@
 		jr $ra
 	
 	# AI Logic to choose it's move
-	# Args: NONE
+	# Args: $a0 - isBotX
 	# Return value: $v0 - bot's move
+	# Stack
+	# 0 - 4
 	get_bot_move:
-		# TODO
-		li $v0, 3
+	# Prologue
+		subi $sp, $sp, 4
+		sw $ra, ($sp)
+	# Body
+		jal boardX
+		move $t0, $v0
+		jal boardO
+		or $t0, $t0, $v0
+		
+		get_bot_move_while_1:
+			li $v0, 30
+			syscall
+			
+			li $a0, 1
+			li $a1, 9
+			li $v0, 42
+			syscall
+			move $v0, $a0
+			
+			subi $a0, $a0, 1
+			srlv $t1, $t0, $a0
+			and $t1, $t1, 1
+			
+			bnez $t1, get_bot_move_while_1
+		end_get_bot_move_while_1:
+		
+	# Epilogue
+		lw $ra, ($sp)
+		addi $sp, $sp, 4
 	
 		jr $ra
 	
@@ -187,13 +216,15 @@
 		xor $t0, $a0, $a1 # $t0 = isUserTurn
 		
 		beqz $t0 play_else_1
-		play_if_1: # isBotTurn
-			jal get_bot_move
-			# $t0 = bot_move
-			move $t0, $v0
-		play_else_1: # isUserTurn
+		play_if_1: # isUserTurn
 			jal get_user_move
 			# $t0 = user_move
+			move $t0, $v0
+			j end_play_if_1
+		play_else_1: # isBotTurn
+			lw $a0, 8($sp)
+			jal get_bot_move
+			# $t0 = bot_move
 			move $t0, $v0
 		end_play_if_1:
 		# $t1 = isBotX
@@ -272,52 +303,55 @@
 	# 2 - 'O' won
 	# 3 - Draw
 	# Stack:
+	# 8 - 12 | boardO
+	# 4 - 8 | boardX
 	# 0 - 4 | $ra
 	evaluate_board:
 	# Prologue
-		subi $sp, $sp, 4
+		subi $sp, $sp, 12
 		sw $ra, ($sp)
 	# Body
-		lw $t0, board
-		lw $t1, drawMask
+		jal boardX
+		sw $v0, 4($sp)
+		jal boardO
+		sw $v0, 8($sp)
 		
-		xor $t0, $t0, $t1
-		not $t0, $t0
+		lw $a0, 4($sp) # $a0 = boardX
+		jal has_board_won
 		
-		beqz $t0, evaluate_board_else_1
-		evaluate_board_if_1: # Not a draw
-			jal boardX
-			move $a0, $v0
+		beqz $v0, evaluate_board_else_1
+		evaluate_board_if_1: # X has won
+			li $v0, 1
+			
+			j end_evaluate_board_if_1
+		evaluate_board_else_1: # X has not won
+			lw $a0, 8($sp) # $a0 = boardO
 			jal has_board_won
 			
 			beqz $v0, evaluate_board_else_2
-			evaluate_board_if_2: # X has won
-				li $v0, 1
-				
+			evaluate_board_if_2: # O has won
+				li $v0, 2
 				j end_evaluate_board_if_2
-			evaluate_board_else_2: # X has not won
-				jal boardX
-				move $a0, $v0
-				jal has_board_won
+			evaluate_board_else_2: # Nobody won yet
+				lw $t0, 4($sp) # $t0 = boardX
+				lw $t1, 8($sp) # $t1 = boardO
 				
-				beqz $v0, evaluate_board_else_3
-				evaluate_board_if_3: # O has won
-					li $v0, 2
+				or $t0, $t0, $t1 # $t0 |= $t1
+				lw $t1, drawMask
+				bne $t0, $t1, evaluate_board_else_3
+				evaluate_board_if_3: # Draw
+					li $v0, 3
 					
 					j end_evaluate_board_if_3
-				evaluate_board_else_3: # Nobody won yet
-					li $v0, 0
+				evaluate_board_else_3: # Game is still running
+					li $v0, 0	
 				end_evaluate_board_if_3:
 			end_evaluate_board_if_2:
-			
-			j end_evaluate_board_if_1
-		evaluate_board_else_1: # Draw
-			li $v0, 3
 		end_evaluate_board_if_1:
 		
 	# Epilogue
 		lw $ra, ($sp)
-		addi $sp, $sp, 4
+		addi $sp, $sp, 12
 	
 		jr $ra
 	
@@ -576,9 +610,9 @@
 			jal play
 			
 			# switch turns
-			lw $t1, 12($sp)
-			not $t1, $t1
-			sw $t1, 12($sp)
+			lw $t1, 8($sp)
+			seq $t1, $t1, $zero # $t1 != $t1
+			sw $t1, 8($sp)
 			
 			j main_loop
 		end_main_loop:
