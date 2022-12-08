@@ -1,5 +1,8 @@
 .data
-	board: .word 0x00000312 # 4 bytes storing the positions marked either as X or O
+	board: .word 0x312 # 4 bytes storing the positions marked either as X or O
+	
+	drawMask: .word 0x2FFFF
+	winMasks: .word 0x7, 0x38, 0x1C0, 0x49, 0x92, 0x124, 0x111, 0x54
 
 	emptyRow:   .asciiz "      |     |     \n"
 	contentRowBegin: .asciiz "   "
@@ -9,12 +12,11 @@
 	inputSpaceMessage: .asciiz "Digite a posição desejada [1-9]: "
 	invalidSpaceMessage: .asciiz "A casa selecionada é inválida, pois deve estar no intervalo [1,9].\n"
 	takenSpaceMessage: .asciiz "A casa selecionada já foi preenchida. Selecione uma casa vazia.\n"
-.text
-	jal print_board
-	
-	li $v0, 0
-	
-	#jal main # Call the main procedure (start the program)
+	xWonMessage: .asciiz "\nX venceu!\n"
+	oWonMessage: .asciiz "\nO venceu!\n"
+	drawMessage: .asciiz "\nDeu velha! :/\n"
+.text	
+	jal main # Call the main procedure (start the program)
 	
 	# Set $a0 to the return value of main
 	# set $v0 register to 17 (exit2 syscall)
@@ -94,21 +96,21 @@
 			# shifts the bit 1 to the desired position (input-1 times)
 			# and stores the resulting byte in $t3
 			subi $t2, $a0, 1
-			sllv $t3, $t2, $t1
+			sllv $t3, $t1, $t2
 		
 			# Is there a common bit between the board and the selected space?
-			and $t4, $a0, $t0
+			and $t4, $t0, $t3
 			
+			li $v0, 1
 			beqz $t4, end_if_2
 			if_2: # yes, so the space is taken ($t4 = 1)
 				# print takenSpaceMessage
 				li $v0, 4
 				la $a0, takenSpaceMessage
 				syscall
+				
+				li $v0, 0
 			end_if_2: # no
-			
-			# return !$t4
-			not $v0, $t4
 		end_if_1:
 	# Epilogue
 		lw $ra, ($sp)
@@ -130,6 +132,7 @@
 	# Body
 		do_while_1: # Gets an input until it's valid		
 			# print inputSpaceMessage
+			li $v0, 4
 			la $a0, inputSpaceMessage
 			syscall
 		
@@ -206,7 +209,7 @@
 			# $t0 += 9-1 = 8 (boardO is stored in the 19th-10th bits)
 			# and humans count beginning from 1
 			addi $t0, $t0, 8
-				
+			
 			j play_end_if_2
 		play_else_2: # Player is X
 			# $t0-- (humans count beginning from 1)
@@ -228,6 +231,38 @@
 		addi $sp, $sp, 12
 		
 		jr $ra
+		
+	# Returns true if the provided board has won
+	# Args: $a0 (board)
+	# Return value: $v0 (bool)
+	# Stack: NONE
+	has_board_won:		
+		la $t0, winMasks
+		li $t1, 0
+		li $t3, 0 # accumulator
+		has_board_won_for_1: # i = 1,9
+			bgt $t1, 9, end_has_board_won_for_1
+			
+			# $t2 = mask[i]
+			sll $t2, $t1, 2
+			addu $t2, $t2, $t0
+			lw $t2, ($t2)
+			
+			# and between mask and board
+			and $t4, $t2, $a0
+			# is the result equal to the mask?
+			seq $t4, $t4, $t2
+			# accumulator |= $t4
+			or $t3, $t3, $t4
+			
+			addi $t1, $t1, 1
+			j has_board_won_for_1
+		end_has_board_won_for_1:
+		
+		# board has won if accumulator is not zero
+		sne $v0, $t3, $zero
+		
+		jr $ra
 	
 	# Logic to verify if the game has finished (either someone won or it's a draw)
 	# Args: NONE
@@ -236,9 +271,54 @@
 	# 1 - 'X' won
 	# 2 - 'O' won
 	# 3 - Draw
+	# Stack:
+	# 0 - 4 | $ra
 	evaluate_board:
-		li $v0, 0
+	# Prologue
+		subi $sp, $sp, 4
+		sw $ra, ($sp)
+	# Body
+		lw $t0, board
+		lw $t1, drawMask
 		
+		xor $t0, $t0, $t1
+		not $t0, $t0
+		
+		beqz $t0, evaluate_board_else_1
+		evaluate_board_if_1: # Not a draw
+			jal boardX
+			move $a0, $v0
+			jal has_board_won
+			
+			beqz $v0, evaluate_board_else_2
+			evaluate_board_if_2: # X has won
+				li $v0, 1
+				
+				j end_evaluate_board_if_2
+			evaluate_board_else_2: # X has not won
+				jal boardX
+				move $a0, $v0
+				jal has_board_won
+				
+				beqz $v0, evaluate_board_else_3
+				evaluate_board_if_3: # O has won
+					li $v0, 2
+					
+					j end_evaluate_board_if_3
+				evaluate_board_else_3: # Nobody won yet
+					li $v0, 0
+				end_evaluate_board_if_3:
+			end_evaluate_board_if_2:
+			
+			j end_evaluate_board_if_1
+		evaluate_board_else_1: # Draw
+			li $v0, 3
+		end_evaluate_board_if_1:
+		
+	# Epilogue
+		lw $ra, ($sp)
+		addi $sp, $sp, 4
+	
 		jr $ra
 	
 	# Prints the current char at the desired board position
@@ -407,12 +487,51 @@
 	
 	# Prints a message according to the game state
 	# Args: $a0 - boardState
+	# 0 - Game is still running
+	# 1 - 'X' won
+	# 2 - 'O' won
+	# 3 - Draw
 	# Return value: NONE
+	# Stack:
+	# 4 - 8 | $a0
+	# 0 - 4 | $ra
 	print_turn:
-		# TODO
-		# should be a switch-case using $a0
+	# Prologue
+		subi $sp, $sp, 8
+		sw $ra, ($sp)
+		sw $a0, 4($sp)
+	# Body
 		jal print_board
 		
+		print_turn_switch:
+			lw $t0, 4($sp)
+			li $v0, 4
+			
+			beq, $t0, 0, print_turn_case_0
+			beq, $t0, 1, print_turn_case_1
+			beq, $t0, 2, print_turn_case_2
+			beq, $t0, 3, print_turn_case_3
+			
+			print_turn_case_0: # TODO?
+				j end_print_turn_switch
+			print_turn_case_1:
+				la $a0, xWonMessage
+				syscall
+				j end_print_turn_switch
+			print_turn_case_2:
+				la $a0, oWonMessage
+				syscall
+				j end_print_turn_switch
+			print_turn_case_3:
+				la $a0, drawMessage
+				syscall
+				j end_print_turn_switch
+		end_print_turn_switch:
+	
+	# Epilogue
+		lw $ra, ($sp)
+		addi $sp, $sp, 8
+	
 		jr $ra
 	
 	# Main procedure
@@ -426,7 +545,7 @@
 	main:
 	# Prologue
 		# Increase stack
-		addiu $sp, $sp, -16
+		subi $sp, $sp, 16
 		# Store $ra at $sp
 		sw $ra, ($sp)
 	
@@ -456,6 +575,11 @@
 			lw $a1, 8($sp)
 			jal play
 			
+			# switch turns
+			lw $t1, 12($sp)
+			not $t1, $t1
+			sw $t1, 12($sp)
+			
 			j main_loop
 		end_main_loop:
 		
@@ -463,6 +587,6 @@
 		# Restore $ra value
 		lw $ra, ($sp)
 		# Reduce the stack
-		addiu $sp, $sp, 16
+		addi $sp, $sp, 16
 		
 		jr $ra
